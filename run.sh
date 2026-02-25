@@ -5,6 +5,45 @@ set -e
 
 echo "Starting AsciigenPy..."
 
+# Check if git is installed and update repo
+if ! command -v git &> /dev/null; then
+    echo "Warning: Git is not installed."
+    read -p "Do you want to install git to receive updates? (y/n) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if command -v apt &> /dev/null; then
+            echo "Installing git via apt..."
+            sudo apt update && sudo apt install -y git
+        elif command -v dnf &> /dev/null; then
+            echo "Installing git via dnf..."
+            sudo dnf install -y git
+        elif command -v pacman &> /dev/null; then
+            echo "Installing git via pacman..."
+            sudo pacman -S --noconfirm git
+        else
+            echo "Error: Unsupported package manager. Skipping update check."
+        fi
+    fi
+fi
+
+if command -v git &> /dev/null; then
+    echo "Checking for updates..."
+    git fetch -q
+    if git status -uno | grep -q 'Your branch is behind'; then
+        echo "Updates found!"
+        read -p "Do you want to update AsciigenPy to the latest version? (y/n) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Pulling latest changes..."
+            git pull
+        else
+            echo "Skipping update."
+        fi
+    else
+        echo "AsciigenPy is up to date."
+    fi
+fi
+
 # Check if python3 is installed
 if ! command -v python3 &> /dev/null; then
     echo "Error: Python 3 is not installed or not in PATH."
