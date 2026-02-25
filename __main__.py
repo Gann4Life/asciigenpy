@@ -524,25 +524,30 @@ class AsciigenPy(QMainWindow):
             working_img = ImageEnhance.Brightness(working_img).enhance(b)
 
             # Unified Engine Call
-            img_io = io.BytesIO()
-            working_img.save(img_io, format='PNG')
-            img_io.seek(0)
-            
-            art = AsciiArt.from_image(img_io)
-            # Resize image cleanly to exact dimensions matching terminal char sizes before sending to engine
-            resized_img = working_img.resize((w, h), Image.Resampling.LANCZOS)
-            res_io = io.BytesIO()
-            resized_img.save(res_io, format='PNG')
-            res_io.seek(0)
-            
-            art_resized = AsciiArt.from_image(res_io)
             try:
-                # Force engine width slightly larger to ensure our target W is hit post-aspect-calc inside the lib
-                res = art_resized.to_ascii(columns=w, char=self.charset_input.text(), width_ratio=1.0)
-            except TypeError:
-                res = art_resized.to_ascii(columns=w, chars=self.charset_input.text(), width_ratio=1.0)
-            
-            self.output.setPlainText(res)
+                # Use from_pillow_image directly if the library supports it to avoid heavy I/O overhead on every slider move
+                if hasattr(AsciiArt, 'from_pillow_image'):
+                    # Resize image cleanly to exact dimensions matching terminal char sizes before sending to engine
+                    resized_img = working_img.resize((w, h), Image.Resampling.LANCZOS)
+                    art_resized = AsciiArt.from_pillow_image(resized_img)
+                else:
+                    # Fallback for older ascii_magic versions if from_pillow_image isn't available
+                    resized_img = working_img.resize((w, h), Image.Resampling.LANCZOS)
+                    res_io = io.BytesIO()
+                    resized_img.save(res_io, format='PNG')
+                    res_io.seek(0)
+                    art_resized = AsciiArt.from_image(res_io)
+
+                try:
+                    # Force engine width slightly larger to ensure our target W is hit post-aspect-calc inside the lib
+                    res = art_resized.to_ascii(columns=w, char=self.charset_input.text(), width_ratio=1.0)
+                except TypeError:
+                    res = art_resized.to_ascii(columns=w, chars=self.charset_input.text(), width_ratio=1.0)
+                
+                self.output.setPlainText(res)
+            except Exception as inner_e:
+                self.output.setPlainText(f"ASCII ENGINE ERROR: {inner_e}")
+
             
         except Exception as e:
             self.output.setPlainText(f"RUNTIME ERROR: {e}")
