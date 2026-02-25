@@ -353,7 +353,11 @@ class AsciigenPy(QMainWindow):
         # ASCII Preview Workspace
         self.output = QTextEdit()
         self.output.setReadOnly(True)
-        self.output.setFont(QFont("Monospace", 7))
+        # Force a fixed-pitch monospace font that works natively across systems 
+        sys_font = QFont("Consolas", 8)
+        sys_font.setStyleHint(QFont.StyleHint.Monospace)
+        sys_font.setFixedPitch(True)
+        self.output.setFont(sys_font)
         self.output.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.apply_theme()
         content_layout.addWidget(self.output, 4)
