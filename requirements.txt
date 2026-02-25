@@ -1,0 +1,6 @@
+PyQt6
+PyQt6-Qt6
+Pillow
+ascii-magic
+pyperclip
+
