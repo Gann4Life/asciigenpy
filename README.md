@@ -12,6 +12,12 @@ Once the application is running, you can use the interactive User Interface to t
 
 ## Getting Started
 
+First, clone the repository to your local machine:
+```bash
+git clone https://github.com/Gann4Life/asciigenpy.git
+cd asciigenpy
+```
+
 You can run AsciigenPy in two ways: Manually using the terminal, or using the provided startup scripts `run.bat` (Windows) and `run.sh` (Linux/macOS).
 
 ### Using the startup scripts (Recommended)
