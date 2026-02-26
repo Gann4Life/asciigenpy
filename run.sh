@@ -87,4 +87,4 @@ else
 fi
 
 echo "Running AsciigenPy..."
-python .
+python -m asciigenpy

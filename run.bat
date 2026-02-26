@@ -84,6 +84,6 @@ if exist "requirements.txt" (
 )
 
 echo Running AsciigenPy...
-python .
+python -m asciigenpy
 
 pause

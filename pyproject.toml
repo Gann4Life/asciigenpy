@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "AsciigenPy"
+version = "1.0.0"
+authors = [
+  { name="Gann4Life" },
+]
+description = "Python program that generates ASCII art, featuring a GUI."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "Pillow==11.1.0",
+    "PyQt6==6.8.1",
+    "ascii-magic==2.3.0",
+    "pyperclip==1.9.0",
+]
+
+[project.scripts]
+asciigenpy = "asciigenpy.__main__:main"
