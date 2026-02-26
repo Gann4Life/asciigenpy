@@ -1,10 +1,11 @@
 import sys
+import os
 import io
 import pyperclip
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSlider, QLabel, QTextEdit, QFileDialog, QLineEdit,
                              QGroupBox, QComboBox, QCheckBox, QStyle)
-from PyQt6.QtCore import Qt, QRect, QPoint, QSize, QTimer, QRectF, QPointF, QSizeF
+from PyQt6.QtCore import Qt, QRect, QPoint, QSize, QTimer, QRectF, QPointF, QSizeF, QSettings
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QPen, QColor, QPainterPath
 from PIL import Image, ImageEnhance, ImageOps
 from ascii_magic import AsciiArt
@@ -221,6 +222,8 @@ class AsciigenPy(QMainWindow):
         self.setWindowTitle("AsciigenPy Workspace")
         self.setMinimumSize(1100, 850)
         self.setAcceptDrops(True)
+        
+        self.settings = QSettings("Gann4Life", "AsciigenPy")
         
         self.img_pil = None
         self.source_win = SourceWindow(self)
@@ -484,10 +487,12 @@ class AsciigenPy(QMainWindow):
         super().keyPressEvent(event)
 
     def load_dialog(self):
+        last_dir = self.settings.value("last_dir", "")
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import Asset", "", "Images (*.png *.jpg *.jpeg *.webp)"
+            self, "Import Asset", last_dir, "Images (*.png *.jpg *.jpeg *.webp)"
         )
         if path:
+            self.settings.setValue("last_dir", os.path.dirname(path))
             self.load_image(path)
 
     def load_image(self, path):
