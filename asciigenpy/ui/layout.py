@@ -204,13 +204,6 @@ class AsciigenUI(QWidget):
         self.act_toggle_preview.setChecked(False)
         self.menu_view.addAction(self.act_toggle_preview)
         
-        self.act_window_on_top = QAction("Keep Preview Window On Top", self.parent_window)
-        self.act_window_on_top.setCheckable(True)
-        self.act_window_on_top.setChecked(True) # Requested to be toggled on by default
-        self.menu_view.addAction(self.act_window_on_top)
-        
-        self.menu_view.addSeparator()
-        
         self.act_invert_processing = QAction("Invert ASCII Calculation", self.parent_window)
         self.act_invert_processing.setCheckable(True)
         self.act_invert_processing.setChecked(False)

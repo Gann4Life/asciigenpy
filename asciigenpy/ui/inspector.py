@@ -103,11 +103,7 @@ class SourceLabel(QWidget):
             
         self.selection_rect = self.selection_rect.intersected(QRectF(0, 0, img_w, img_h))
         self.update()
-        if hasattr(self.window(), 'parent_app') and self.window().parent_app:
-            if hasattr(self.window().parent_app, 'on_crop_changed'):
-                self.window().parent_app.on_crop_changed()
-            else:
-                self.window().parent_app.trigger_update()
+        self._notify_crop_change()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -124,11 +120,15 @@ class SourceLabel(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.interaction_state = None
-            if hasattr(self.window(), 'parent_app') and self.window().parent_app:
-                if hasattr(self.window().parent_app, 'on_crop_changed'):
-                    self.window().parent_app.on_crop_changed()
-                else:
-                    self.window().parent_app.trigger_update()
+            self._notify_crop_change()
+
+    def _notify_crop_change(self):
+        # Resolve reference based on whether the label is in a detached window or a dock widget
+        app = self.window().parent_app if hasattr(self.window(), 'parent_app') else self.window()
+        if hasattr(app, 'on_crop_changed'):
+            app.on_crop_changed()
+        elif hasattr(app, 'trigger_update'):
+            app.trigger_update()
 
     def paintEvent(self, event):
         if self.original_pixmap.isNull():
@@ -178,10 +178,8 @@ class SourceLabel(QWidget):
 
 class SourceWindow(QWidget):
     """AsciigenPy Image Inspector: Floating reference for crop operations"""
-    def __init__(self, parent):
-        # Bind safely to the main window as a detached physical tool window so Z-indexing enforces On-Top behavior
-        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowTitle("AsciigenPy - Source Inspector")
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.parent_app = parent
         self.label = SourceLabel(self)
         
@@ -203,17 +201,11 @@ class SourceWindow(QWidget):
         self.resize(w, h)
             
         if hasattr(self.parent_app, 'preview_is_open') and self.parent_app.preview_is_open:
-            self.show()
+            if hasattr(self.parent_app, 'preview_dock'):
+                self.parent_app.preview_dock.show()
+                self.parent_app.preview_dock.raise_()
 
-    def closeEvent(self, event):
-        if hasattr(self.parent_app, 'preview_is_open'):
-            self.parent_app.preview_is_open = False
-            if hasattr(self.parent_app, 'ui'):
-                self.parent_app.ui.act_toggle_preview.setChecked(False)
-            else:
-                self.parent_app.act_toggle_preview.setChecked(False)
-        super().closeEvent(event)
-        
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_V:
             if hasattr(self.parent_app, 'ui'):
@@ -226,16 +218,6 @@ class SourceWindow(QWidget):
                 self.parent_app.toggle_invert()
         super().keyPressEvent(event)
 
-    def set_always_on_top(self, state):
-        # We must re-declare the core window type alongside the Top Hint for Linux/X11
-        if state:
-            self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
-        else:
-            self.setWindowFlags(Qt.WindowType.Tool)
-            
-        # We must explicitly call show() again after changing window flags in Qt
-        if hasattr(self.parent_app, 'preview_is_open') and self.parent_app.preview_is_open:
-            self.show()
 
     @property
     def selection_rect(self):

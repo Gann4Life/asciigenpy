@@ -14,8 +14,9 @@ requires-python = ">=3.8"
 dependencies = [
     "Pillow==11.1.0",
     "PyQt6==6.8.1",
-    "ascii-magic==2.3.0",
-    "pyperclip==1.9.0",
+    "ascii-magic>=2.3.0",
+    "pyperclip>=1.8.2",
+    "pyqtdarktheme>=2.1.0"
 ]
 
 [project.scripts]

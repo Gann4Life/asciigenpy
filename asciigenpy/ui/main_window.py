@@ -4,7 +4,8 @@ import io
 import pyperclip
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox
 from PyQt6.QtCore import Qt, QTimer, QSettings, QRectF
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QPainter
+from PyQt6.QtSvg import QSvgGenerator
 from PIL import Image, ImageEnhance, ImageOps
 from ascii_magic import AsciiArt
 
@@ -30,8 +31,18 @@ class AsciigenPy(QMainWindow):
         # Standardizing organization as "asciigenpy" produces ~/.config/asciigenpy/AsciigenPy.conf cleanly
         self.settings = QSettings("asciigenpy", "AsciigenPy")
         
-        self.img_pil = None
         self.source_win = SourceWindow(self)
+        
+        from PyQt6.QtWidgets import QDockWidget
+        from PyQt6.QtCore import Qt
+        
+        self.preview_dock = QDockWidget("Image Component Inspector", self)
+        self.preview_dock.setWidget(self.source_win)
+        self.preview_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.preview_dock)
+        self.preview_dock.hide()
+        self.preview_dock.visibilityChanged.connect(self._sync_preview_toggle)
+        
         self.is_inverted = False
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
@@ -56,11 +67,14 @@ class AsciigenPy(QMainWindow):
         self.ui.act_save_project.triggered.connect(self.save_project)
         self.ui.act_exit.triggered.connect(self.close)
         
+        self.ui.act_exp_txt.triggered.connect(self.export_txt)
+        self.ui.act_exp_png.triggered.connect(lambda: self.export_image(".png"))
+        self.ui.act_exp_svg.triggered.connect(lambda: self.export_image(".svg"))
+        
         self.ui.act_copy.triggered.connect(self.to_clip)
         self.ui.act_paste.triggered.connect(self.paste_image)
         
         self.ui.act_toggle_preview.triggered.connect(self.toggle_preview)
-        self.ui.act_window_on_top.triggered.connect(self.toggle_window_on_top)
         self.ui.act_invert_processing.triggered.connect(self.toggle_invert)
         
         self._populate_recent_images()
@@ -87,16 +101,17 @@ class AsciigenPy(QMainWindow):
         self.ui.charset_input.textEdited.connect(self.on_charset_custom_edited)
 
     def toggle_preview(self):
-        # Update the boolean tracking flag and sync the window state
+        # Update the boolean tracking flag and sync the dock state
         self.preview_is_open = self.ui.act_toggle_preview.isChecked()
         if self.preview_is_open:
-            self.source_win.show()
-            self.source_win.raise_()
+            self.preview_dock.show()
+            self.preview_dock.raise_()
         else:
-            self.source_win.hide()
-            
-    def toggle_window_on_top(self):
-        self.source_win.set_always_on_top(self.ui.act_window_on_top.isChecked())
+            self.preview_dock.hide()
+
+    def _sync_preview_toggle(self, is_visible):
+        self.preview_is_open = is_visible
+        self.ui.act_toggle_preview.setChecked(is_visible)
 
     def aspect_changed(self):
         if self.ui.aspect_cb.isChecked() and self.img_pil:
@@ -582,6 +597,115 @@ class AsciigenPy(QMainWindow):
                                 "Missing clipboard backend.\n\n"
                                 "Please ensure you have a clipboard utility installed for your operating system "
                                 "(e.g., 'wl-clipboard' or 'xclip' on Linux).")
+
+    def export_txt(self):
+        last_dir = self.settings.value("last_dir", "")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export as Text", last_dir, "Text Document (*.txt)"
+        )
+        if path:
+            if not path.endswith('.txt'): path += '.txt'
+            self.settings.setValue("last_dir", os.path.dirname(path))
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(self.ui.output.toPlainText())
+                self.statusBar().showMessage(f"Exported to {os.path.basename(path)}", 5000)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Failed", f"Could not export text:\n{e}")
+
+    def export_image(self, initial_ext):
+        if not self.ui.output.toPlainText().strip():
+            QMessageBox.warning(self, "Empty Workspace", "There is no ASCII art to export!")
+            return
+            
+        from .export_dialog import ExportOptionsDialog
+        dialog = ExportOptionsDialog(self, ascii_text=self.ui.output.toPlainText(), base_font=self.ui.output.font(), default_ext=initial_ext)
+        if not dialog.exec():
+            return
+            
+        opts = dialog.get_options()
+        ext = opts['ext']
+        font_size = opts['font_size']
+        
+        last_dir = self.settings.value("last_dir", "")
+        filter_str = "PNG Image (*.png)" if ext == ".png" else "SVG Vector (*.svg)"
+        path, _ = QFileDialog.getSaveFileName(self, f"Export as {ext.upper()}", last_dir, filter_str)
+        
+        if not path: return
+        if not path.endswith(ext): path += ext
+        self.settings.setValue("last_dir", os.path.dirname(path))
+        
+        try:
+            # Match colors directly to the UI theme
+            bg_color = Qt.GlobalColor.black if self.is_inverted else Qt.GlobalColor.white
+            text_color = "white" if self.is_inverted else "black"
+                
+            ascii_text = self.ui.output.toPlainText()
+            lines = ascii_text.split('\n')
+            max_chars = max([len(l) for l in lines] + [1])
+            
+            if ext == ".png":
+                # Render via QTextDocument for PNG
+                from PyQt6.QtGui import QTextDocument, QFont, QFontMetrics
+                doc = QTextDocument()
+                font = self.ui.output.font()
+                font.setPointSize(font_size)
+                doc.setDefaultFont(font)
+                
+                # Use setHtml to hard-force the text color through standard CSS
+                doc.setHtml(f"<pre style='color:{text_color}; margin:0;'>{ascii_text}</pre>")
+                
+                fm = QFontMetrics(font)
+                doc_w = fm.horizontalAdvance("A") * (max_chars) + (fm.horizontalAdvance("A"))
+                doc_h = fm.lineSpacing() * (len(lines)) + (fm.lineSpacing())
+                doc.setTextWidth(doc_w)
+                
+                img = QImage(int(doc_w), int(doc_h), QImage.Format.Format_ARGB32)
+                img.fill(bg_color if bg_color != Qt.GlobalColor.transparent else Qt.GlobalColor.transparent)
+                painter = QPainter(img)
+                doc.drawContents(painter)
+                painter.end()
+                img.save(path)
+                
+            elif ext == ".svg":
+                # Build custom SVG XML Manually for true editable text
+                import html
+                
+                # Heuristic mapping for standard monospaced browser rendering
+                c_width = font_size * 0.60
+                c_height = font_size * 1.20 # Approximate line height
+                doc_w = c_width * max_chars
+                doc_h = c_height * len(lines) + c_height
+                
+                bg_hex = "transparent"
+                if bg_color == Qt.GlobalColor.white: bg_hex = "#ffffff"
+                elif bg_color == Qt.GlobalColor.black: bg_hex = "#000000"
+                
+                t_color = "#000000" if text_color == "black" else "#ffffff"
+                
+                svg_lines = []
+                svg_lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {doc_w} {doc_h}" width="{doc_w}" height="{doc_h}">')
+                if bg_hex != "transparent":
+                    svg_lines.append(f'  <rect width="100%" height="100%" fill="{bg_hex}"/>')
+                
+                svg_lines.append(f'  <text x="0" y="0" font-family="{self.ui.output.font().family()}" font-size="{font_size}px" fill="{t_color}" xml:space="preserve">')
+                
+                for i, line in enumerate(lines):
+                    # SVG Text renders from the baseline, meaning y=0 is cut off. Offset identically by line-height
+                    y_pos = (i + 1) * c_height * 0.85
+                    escaped = html.escape(line)
+                    if not escaped: escaped = " "
+                    svg_lines.append(f'    <tspan x="0" y="{y_pos}">{escaped}</tspan>')
+                    
+                svg_lines.append('  </text>')
+                svg_lines.append('</svg>')
+                
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(svg_lines))
+                
+            self.statusBar().showMessage(f"Exported to {os.path.basename(path)}", 5000)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Failed", f"Could not export {ext}:\n{e}")
 
     def closeEvent(self, event):
         if getattr(self, '_is_modified', False):
