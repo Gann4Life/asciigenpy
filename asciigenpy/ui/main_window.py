@@ -3,7 +3,7 @@ import os
 import io
 import pyperclip
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox
-from PyQt6.QtCore import Qt, QTimer, QSettings
+from PyQt6.QtCore import Qt, QTimer, QSettings, QRectF
 from PyQt6.QtGui import QPixmap, QImage
 from PIL import Image, ImageEnhance, ImageOps
 from ascii_magic import AsciiArt
@@ -37,21 +37,44 @@ class AsciigenPy(QMainWindow):
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self.process_ascii)
 
+        self.preview_timer = QTimer()
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.timeout.connect(self.update_image_preview)
+        
+        self._is_modified = False
+        self.current_project_path = None
+
         self._connect_signals()
         self.ui.apply_theme(self.is_inverted)
+        self.update_title()
 
     def _connect_signals(self):
         """Connects all UI widget interactions to controller methods."""
-        # Top Bar
-        self.ui.btn_load.clicked.connect(self.load_dialog)
-        self.ui.btn_paste.clicked.connect(self.paste_image)
-        self.ui.btn_preview.clicked.connect(self.toggle_preview)
-        self.ui.btn_inv.clicked.connect(self.toggle_invert)
-        self.ui.btn_copy.clicked.connect(self.to_clip)
+        # Menu Bar Action Hooks
+        self.ui.act_open_image.triggered.connect(self.load_dialog)
+        self.ui.act_open_project.triggered.connect(self.load_project_dialog)
+        self.ui.act_save_project.triggered.connect(self.save_project)
+        self.ui.act_exit.triggered.connect(self.close)
+        
+        self.ui.act_copy.triggered.connect(self.to_clip)
+        self.ui.act_paste.triggered.connect(self.paste_image)
+        
+        self.ui.act_toggle_preview.triggered.connect(self.toggle_preview)
+        self.ui.act_window_on_top.triggered.connect(self.toggle_window_on_top)
+        self.ui.act_invert_processing.triggered.connect(self.toggle_invert)
+        
+        self._populate_recent_images()
+        self._populate_recent_projects()
+        
+        # Crop Area Sync Hooks
+        self.ui.crop_x.valueChanged.connect(self.apply_manual_crop)
+        self.ui.crop_y.valueChanged.connect(self.apply_manual_crop)
+        self.ui.crop_w.valueChanged.connect(self.apply_manual_crop)
+        self.ui.crop_h.valueChanged.connect(self.apply_manual_crop)
         
         # Adjustments
-        self.ui.c_slider.valueChanged.connect(self.update_image_preview)
-        self.ui.b_slider.valueChanged.connect(self.update_image_preview)
+        self.ui.c_slider.valueChanged.connect(self.trigger_preview_update)
+        self.ui.b_slider.valueChanged.connect(self.trigger_preview_update)
         
         # ASCII Rules
         self.ui.w_slider.valueChanged.connect(self.sync_width)
@@ -64,13 +87,16 @@ class AsciigenPy(QMainWindow):
         self.ui.charset_input.textEdited.connect(self.on_charset_custom_edited)
 
     def toggle_preview(self):
-        # Using self.ui.btn_preview because btn_preview is a checkable state property we need to track
-        self.preview_is_open = self.ui.btn_preview.isChecked()
+        # Update the boolean tracking flag and sync the window state
+        self.preview_is_open = self.ui.act_toggle_preview.isChecked()
         if self.preview_is_open:
             self.source_win.show()
             self.source_win.raise_()
         else:
             self.source_win.hide()
+            
+    def toggle_window_on_top(self):
+        self.source_win.set_always_on_top(self.ui.act_window_on_top.isChecked())
 
     def aspect_changed(self):
         if self.ui.aspect_cb.isChecked() and self.img_pil:
@@ -151,9 +177,18 @@ class AsciigenPy(QMainWindow):
                 pil_buffer = io.BytesIO(byte_array.data())
                 self.img_pil = Image.open(pil_buffer).convert("RGB")
                 
+                old_crop = None
+                if hasattr(self.ui, 'crop_lock_cb') and self.ui.crop_lock_cb.isChecked():
+                    old_crop = QRectF(self.ui.crop_x.value(), self.ui.crop_y.value(), self.ui.crop_w.value(), self.ui.crop_h.value())
+                
                 self.source_win.set_image(pixmap=QPixmap.fromImage(qimage))
-                if not self.ui.btn_preview.isChecked():
-                    self.ui.btn_preview.setChecked(True)
+                self._apply_image_bounds(old_crop)
+                
+                self.current_project_path = None
+                self.mark_modified()
+                
+                if not self.ui.act_toggle_preview.isChecked():
+                    self.ui.act_toggle_preview.setChecked(True)
                     self.toggle_preview()
                 if self.ui.aspect_cb.isChecked():
                     self.sync_width(self.ui.w_slider.value())
@@ -164,7 +199,134 @@ class AsciigenPy(QMainWindow):
     def keyPressEvent(self, event):
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_V:
             self.paste_image()
+        elif event.key() == Qt.Key.Key_V:
+            self.ui.act_toggle_preview.setChecked(not self.ui.act_toggle_preview.isChecked())
+            self.toggle_preview()
+        elif event.key() == Qt.Key.Key_F:
+            self.ui.act_invert_processing.setChecked(not self.ui.act_invert_processing.isChecked())
+            self.toggle_invert()
         super().keyPressEvent(event)
+
+    def serialize_state(self):
+        return {
+            "crop_x": self.ui.crop_x.value(),
+            "crop_y": self.ui.crop_y.value(),
+            "crop_w": self.ui.crop_w.value(),
+            "crop_h": self.ui.crop_h.value(),
+            "contrast": self.ui.c_slider.value(),
+            "brightness": self.ui.b_slider.value(),
+            "width": self.ui.w_slider.value(),
+            "height": self.ui.h_slider.value(),
+            "keep_aspect": self.ui.aspect_cb.isChecked(),
+            "charset": self.ui.charset_input.text(),
+            "invert": self.is_inverted
+        }
+        
+    def deserialize_state(self, state):
+        self.ui.crop_x.setValue(state.get("crop_x", 0))
+        self.ui.crop_y.setValue(state.get("crop_y", 0))
+        self.ui.crop_w.setValue(state.get("crop_w", 100))
+        self.ui.crop_h.setValue(state.get("crop_h", 100))
+        self.ui.c_slider.setValue(state.get("contrast", 10))
+        self.ui.b_slider.setValue(state.get("brightness", 10))
+        self.ui.w_slider.setValue(state.get("width", 120))
+        self.ui.h_slider.setValue(state.get("height", 60))
+        self.ui.aspect_cb.setChecked(state.get("keep_aspect", True))
+        self.ui.charset_input.setText(state.get("charset", self.ui.charset_presets["Standard (10 chars)"]))
+        
+        self.is_inverted = state.get("invert", False)
+        if self.is_inverted != self.ui.act_invert_processing.isChecked():
+            self.ui.act_invert_processing.setChecked(self.is_inverted)
+        self.ui.apply_theme(self.is_inverted)
+        
+        self.apply_manual_crop()
+        self.update_image_preview()
+        self.trigger_update()
+
+    def save_project(self):
+        if not self.img_pil:
+            QMessageBox.warning(self, "No Image", "You must load an image before saving a project.")
+            return
+            
+        last_dir = self.settings.value("last_dir", "")
+        # Prevent default OS shortcuts firing during file load state
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save AsciigenPy Project", last_dir, "AsciigenPy Project (*.agp)"
+        )
+        if not path:
+            return
+            
+        if not path.endswith('.agp'):
+            path += '.agp'
+            
+        self.settings.setValue("last_dir", os.path.dirname(path))
+        
+        try:
+            state = self.serialize_state()
+            
+            # Package into a custom extension ZIP
+            import tempfile, json, zipfile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                img_path = os.path.join(tmpdir, "source.png")
+                self.img_pil.save(img_path, "PNG")
+                
+                conf_path = os.path.join(tmpdir, "config.json")
+                with open(conf_path, "w") as f:
+                    json.dump(state, f)
+                    
+                with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    zf.write(img_path, "source.png")
+                    zf.write(conf_path, "config.json")
+                    
+            self._add_recent_project(path)
+            self.current_project_path = path
+            self._is_modified = False
+            self.update_title()
+            
+            self.statusBar().showMessage(f"Project saved to {os.path.basename(path)}", 5000)
+        except Exception as e:
+            QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{e}")
+
+    def load_project_dialog(self):
+        last_dir = self.settings.value("last_dir", "")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open AsciigenPy Project", last_dir, "AsciigenPy Project (*.agp)"
+        )
+        if path:
+            self.settings.setValue("last_dir", os.path.dirname(path))
+            self.load_project(path)
+            
+    def load_project(self, path):
+        import tempfile, json, zipfile
+        try:
+            with zipfile.ZipFile(path, 'r') as zf:
+                if 'source.png' not in zf.namelist() or 'config.json' not in zf.namelist():
+                    raise ValueError("Invalid .agp project format.")
+                    
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    zf.extract('source.png', tmpdir)
+                    zf.extract('config.json', tmpdir)
+                    
+                    # 1. Load the raw image back into the application natively
+                    img_path = os.path.join(tmpdir, "source.png")
+                    self.load_image(img_path)
+                    
+                    # 2. Inject the extracted state exactly as it was saved
+                    conf_path = os.path.join(tmpdir, "config.json")
+                    with open(conf_path, "r") as f:
+                        state = json.load(f)
+                        
+                    self.deserialize_state(state)
+                    
+            self._add_recent_project(path)
+            self.current_project_path = path
+            self._is_modified = False
+            self.update_title()
+            
+            self.statusBar().showMessage("Project loaded successfully", 5000)
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Load Failed", f"Could not open project:\n{e}")
 
     def load_dialog(self):
         last_dir = self.settings.value("last_dir", "")
@@ -174,19 +336,121 @@ class AsciigenPy(QMainWindow):
         )
         if path:
             self.settings.setValue("last_dir", os.path.dirname(path))
+            self._add_recent_image(path)
             self.load_image(path)
+
+    def _add_recent_image(self, path):
+        # Retrieve the current list of recent files, add the new path to the front, and cap at 5
+        recent = self.settings.value("recent_images", [])
+        if path in recent:
+            recent.remove(path)
+        recent.insert(0, path)
+        recent = recent[:5]
+        self.settings.setValue("recent_images", recent)
+        self._populate_recent_images()
+
+    def _populate_recent_images(self):
+        self.ui.menu_recent_images.clear()
+        recent = self.settings.value("recent_images", [])
+        if not recent:
+            self.ui.menu_recent_images.setDisabled(True)
+            return
+            
+        self.ui.menu_recent_images.setDisabled(False)
+        for path in recent:
+            # We create a dummy action that implicitly passes its path to load_image via a lambda loop closure
+            act = self.ui.menu_recent_images.addAction(os.path.basename(path))
+            act.setToolTip(path)
+            act.triggered.connect(lambda checked, p=path: self.load_image(p))
+
+    def _add_recent_project(self, path):
+        recent = self.settings.value("recent_projects", [])
+        if path in recent:
+            recent.remove(path)
+        recent.insert(0, path)
+        recent = recent[:5]
+        self.settings.setValue("recent_projects", recent)
+        self._populate_recent_projects()
+
+    def _populate_recent_projects(self):
+        self.ui.menu_recent_projects.clear()
+        recent = self.settings.value("recent_projects", [])
+        if not recent:
+            self.ui.menu_recent_projects.setDisabled(True)
+            return
+            
+        self.ui.menu_recent_projects.setDisabled(False)
+        for path in recent:
+            act = self.ui.menu_recent_projects.addAction(os.path.basename(path))
+            act.setToolTip(path)
+            act.triggered.connect(lambda checked, p=path: self.load_project(p))
+
+    def _apply_image_bounds(self, override_crop=None):
+        if self.img_pil:
+            w, h = self.img_pil.size
+            self.ui.crop_x.setMaximum(w)
+            self.ui.crop_y.setMaximum(h)
+            self.ui.crop_w.setMaximum(w)
+            self.ui.crop_h.setMaximum(h)
+            self.ui._toggle_crop_inputs(True)
+            
+            if override_crop:
+                self.ui.crop_x.setValue(int(override_crop.x()))
+                self.ui.crop_y.setValue(int(override_crop.y()))
+                self.ui.crop_w.setValue(int(override_crop.width()))
+                self.ui.crop_h.setValue(int(override_crop.height()))
+                self.apply_manual_crop()
+            else:
+                self.on_crop_changed()
 
     def load_image(self, path):
         self.img_pil = Image.open(path).convert("RGB")
+        
+        old_crop = None
+        if hasattr(self.ui, 'crop_lock_cb') and self.ui.crop_lock_cb.isChecked():
+            old_crop = QRectF(self.ui.crop_x.value(), self.ui.crop_y.value(), self.ui.crop_w.value(), self.ui.crop_h.value())
+            
         self.source_win.set_image(path)
-        if not self.ui.btn_preview.isChecked():
-            self.ui.btn_preview.setChecked(True)
+        self._apply_image_bounds(old_crop)
+        
+        self.current_project_path = None
+        self.mark_modified()
+        
+        if not self.ui.act_toggle_preview.isChecked():
+            self.ui.act_toggle_preview.setChecked(True)
             self.toggle_preview()
         if self.ui.aspect_cb.isChecked():
             self.sync_width(self.ui.w_slider.value())
         self.update_image_preview()
 
+    def apply_manual_crop(self):
+        x = self.ui.crop_x.value()
+        y = self.ui.crop_y.value()
+        w = self.ui.crop_w.value()
+        h = self.ui.crop_h.value()
+        self.source_win.label.selection_rect = QRectF(x, y, w, h)
+        if hasattr(self.source_win.label, 'original_pixmap') and not self.source_win.label.original_pixmap.isNull():
+            self.source_win.label.update()
+        self.trigger_update()
+
     def on_crop_changed(self):
+        rect = self.source_win.selection_rect
+        self.ui.crop_x.blockSignals(True)
+        self.ui.crop_y.blockSignals(True)
+        self.ui.crop_w.blockSignals(True)
+        self.ui.crop_h.blockSignals(True)
+        
+        if not rect.isNull():
+            self.ui.crop_x.setValue(int(rect.x()))
+            self.ui.crop_y.setValue(int(rect.y()))
+            self.ui.crop_w.setValue(int(rect.width()))
+            self.ui.crop_h.setValue(int(rect.height()))
+            
+        self.ui.crop_x.blockSignals(False)
+        self.ui.crop_y.blockSignals(False)
+        self.ui.crop_w.blockSignals(False)
+        self.ui.crop_h.blockSignals(False)
+        
         if self.ui.aspect_cb.isChecked() and self.img_pil:
             self.sync_width(self.ui.w_slider.value())
         self.trigger_update()
@@ -237,7 +501,25 @@ class AsciigenPy(QMainWindow):
         # Continues the cascade to compute the ASCII text rendering
         self.trigger_update()
 
+    def update_title(self):
+        title = "AsciigenPy Workspace"
+        if hasattr(self, 'current_project_path') and self.current_project_path:
+            title += f" - {os.path.basename(self.current_project_path)}"
+        if getattr(self, '_is_modified', False):
+            title += " *"
+        self.setWindowTitle(title)
+        
+    def mark_modified(self):
+        if hasattr(self, '_is_modified') and not self._is_modified:
+            self._is_modified = True
+            self.update_title()
+            
+    def trigger_preview_update(self):
+        self.mark_modified()
+        self.preview_timer.start(50)
+
     def trigger_update(self):
+        self.mark_modified()
         # Use a short debounce (35ms) to keep image transformations and ASCII rendering feeling real-time and smooth
         self.update_timer.start(35)
 
@@ -294,8 +576,7 @@ class AsciigenPy(QMainWindow):
     def to_clip(self):
         try:
             pyperclip.copy(self.ui.output.toPlainText())
-            self.ui.btn_copy.setText(" Copied!")
-            QTimer.singleShot(2000, lambda: self.ui.btn_copy.setText(" Copy"))
+            self.statusBar().showMessage("ASCII art copied to clipboard!", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Clipboard Error", 
                                 "Missing clipboard backend.\n\n"
@@ -303,6 +584,22 @@ class AsciigenPy(QMainWindow):
                                 "(e.g., 'wl-clipboard' or 'xclip' on Linux).")
 
     def closeEvent(self, event):
+        if getattr(self, '_is_modified', False):
+            reply = QMessageBox.question(
+                self, 'Unsaved Changes',
+                "You have unsaved changes. Do you want to save your project before closing?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                self.save_project()
+                if getattr(self, '_is_modified', False): # User cancelled save or it failed
+                    event.ignore()
+                    return
+            elif reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+                
         self.source_win.close()
         QApplication.quit()
         super().closeEvent(event)

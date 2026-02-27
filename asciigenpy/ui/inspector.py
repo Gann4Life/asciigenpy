@@ -179,7 +179,8 @@ class SourceLabel(QWidget):
 class SourceWindow(QWidget):
     """AsciigenPy Image Inspector: Floating reference for crop operations"""
     def __init__(self, parent):
-        super().__init__(None, Qt.WindowType.Window)
+        # Bind safely to the main window as a detached physical tool window so Z-indexing enforces On-Top behavior
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
         self.setWindowTitle("AsciigenPy - Source Inspector")
         self.parent_app = parent
         self.label = SourceLabel(self)
@@ -200,6 +201,7 @@ class SourceWindow(QWidget):
         w = min(pixmap.width(), screen.width() // 2)
         h = min(pixmap.height(), screen.height() // 2)
         self.resize(w, h)
+            
         if hasattr(self.parent_app, 'preview_is_open') and self.parent_app.preview_is_open:
             self.show()
 
@@ -207,10 +209,33 @@ class SourceWindow(QWidget):
         if hasattr(self.parent_app, 'preview_is_open'):
             self.parent_app.preview_is_open = False
             if hasattr(self.parent_app, 'ui'):
-                self.parent_app.ui.btn_preview.setChecked(False)
+                self.parent_app.ui.act_toggle_preview.setChecked(False)
             else:
-                self.parent_app.btn_preview.setChecked(False)
+                self.parent_app.act_toggle_preview.setChecked(False)
         super().closeEvent(event)
+        
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_V:
+            if hasattr(self.parent_app, 'ui'):
+                self.parent_app.ui.act_toggle_preview.setChecked(False)
+            else:
+                self.parent_app.act_toggle_preview.setChecked(False)
+            self.parent_app.toggle_preview()
+        elif event.key() == Qt.Key.Key_F:
+            if hasattr(self.parent_app, 'toggle_invert'):
+                self.parent_app.toggle_invert()
+        super().keyPressEvent(event)
+
+    def set_always_on_top(self, state):
+        # We must re-declare the core window type alongside the Top Hint for Linux/X11
+        if state:
+            self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        else:
+            self.setWindowFlags(Qt.WindowType.Tool)
+            
+        # We must explicitly call show() again after changing window flags in Qt
+        if hasattr(self.parent_app, 'preview_is_open') and self.parent_app.preview_is_open:
+            self.show()
 
     @property
     def selection_rect(self):

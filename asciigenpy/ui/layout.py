@@ -1,8 +1,9 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QSlider, QLabel, QTextEdit, 
-                             QLineEdit, QGroupBox, QComboBox, QCheckBox, QStyle)
+                             QLineEdit, QGroupBox, QComboBox, QCheckBox, QStyle,
+                             QMenuBar, QMenu, QSpinBox)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QAction
 
 class AsciigenUI(QWidget):
     """
@@ -15,47 +16,29 @@ class AsciigenUI(QWidget):
         self.parent_window = parent_window
         
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-
-        # 1. Top Action Bar
+        self._create_menu_bar(main_layout)
+        
+        # 1. Top Action Bar: Crop Area Controls
         top_bar = QHBoxLayout()
-        top_bar.setSpacing(10)
+        top_bar.setSpacing(15)
         
-        self.btn_load = QPushButton()
-        self.btn_load.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
-        self.btn_load.setToolTip("Import Image")
-        self.btn_load.setFixedSize(40, 40)
-        top_bar.addWidget(self.btn_load)
+        top_bar.addWidget(QLabel("Crop Area: "))
         
-        self.btn_paste = QPushButton()
-        self.btn_paste.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
-        self.btn_paste.setToolTip("Paste Image from Clipboard (Ctrl+V)")
-        self.btn_paste.setFixedSize(40, 40)
-        top_bar.addWidget(self.btn_paste)
+        self.crop_x = self._create_spinbox("X:", top_bar, 0, 9999, 0)
+        self.crop_y = self._create_spinbox("Y:", top_bar, 0, 9999, 0)
+        self.crop_w = self._create_spinbox("Width:", top_bar, 1, 9999, 100)
+        self.crop_h = self._create_spinbox("Height:", top_bar, 1, 9999, 100)
         
-        self.btn_preview = QPushButton()
-        self.btn_preview.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon))
-        self.btn_preview.setToolTip("Toggle Preview")
-        self.btn_preview.setFixedSize(40, 40)
-        self.btn_preview.setCheckable(True)
-        top_bar.addWidget(self.btn_preview)
-
-        self.btn_inv = QPushButton()
-        self.btn_inv.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
-        self.btn_inv.setToolTip("Invert Output")
-        self.btn_inv.setFixedSize(40, 40)
-        top_bar.addWidget(self.btn_inv)
+        self.crop_lock_cb = QCheckBox("Lock Values")
+        self.crop_lock_cb.setChecked(False)
+        top_bar.addWidget(self.crop_lock_cb)
+        
+        # Disable them initially until an image is loaded and a crop is active
+        self._toggle_crop_inputs(False)
         
         top_bar.addStretch()
-        
-        self.btn_copy = QPushButton(" Copy")
-        self.btn_copy.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
-        self.btn_copy.setToolTip("Copy to Clipboard")
-        self.btn_copy.setStyleSheet("font-weight: bold; min-width: 100px; min-height: 40px; background-color: #2b2b2b; color: #eee; border-radius: 4px;")
-        top_bar.addWidget(self.btn_copy)
-
         main_layout.addLayout(top_bar)
-
+        
         # 2. Content Area Layout
         content_layout = QHBoxLayout()
         
@@ -141,6 +124,97 @@ class AsciigenUI(QWidget):
         layout.addWidget(label)
         layout.addWidget(s)
         return s
+        
+    def _create_spinbox(self, label_text, layout, min_v, max_v, def_v):
+        """Helper to create labeled horizontal spinboxes for crop coordinates."""
+        layout.addWidget(QLabel(label_text))
+        sb = QSpinBox()
+        sb.setRange(min_v, max_v)
+        sb.setValue(def_v)
+        layout.addWidget(sb)
+        return sb
+        
+    def _toggle_crop_inputs(self, state):
+        self.crop_x.setEnabled(state)
+        self.crop_y.setEnabled(state)
+        self.crop_w.setEnabled(state)
+        self.crop_h.setEnabled(state)
+        if hasattr(self, 'crop_lock_cb'):
+            self.crop_lock_cb.setEnabled(state)
+
+    def _create_menu_bar(self, layout):
+        """Constructs the Context Menu Bar at the top of the application."""
+        self.menu_bar = QMenuBar()
+        layout.setMenuBar(self.menu_bar)
+        
+        # --- File Menu ---
+        self.menu_file = self.menu_bar.addMenu("File")
+        
+        self.act_new_project = QAction("New Project", self.parent_window)
+        self.menu_file.addAction(self.act_new_project)
+        
+        self.menu_file.addSeparator()
+        
+        self.act_open_image = QAction("Open Image...", self.parent_window)
+        self.act_open_image.setShortcut("Ctrl+O")
+        self.menu_file.addAction(self.act_open_image)
+        
+        self.act_open_project = QAction("Open Project...", self.parent_window)
+        self.menu_file.addAction(self.act_open_project)
+        
+        self.menu_file.addSeparator()
+        
+        self.menu_recent_images = self.menu_file.addMenu("Recent Images")
+        self.menu_recent_projects = self.menu_file.addMenu("Recent Projects")
+        
+        self.menu_file.addSeparator()
+        
+        self.act_save_project = QAction("Save Project as .agp", self.parent_window)
+        self.act_save_project.setShortcut("Ctrl+S")
+        self.menu_file.addAction(self.act_save_project)
+        
+        self.menu_export = self.menu_file.addMenu("Export As...")
+        self.act_exp_txt = QAction("Text Document (.txt)", self.parent_window)
+        self.act_exp_png = QAction("Image (.png)", self.parent_window)
+        self.act_exp_svg = QAction("Vector (.svg)", self.parent_window)
+        self.menu_export.addAction(self.act_exp_txt)
+        self.menu_export.addAction(self.act_exp_png)
+        self.menu_export.addAction(self.act_exp_svg)
+        
+        self.menu_file.addSeparator()
+        self.act_exit = QAction("Exit", self.parent_window)
+        self.menu_file.addAction(self.act_exit)
+
+        # --- Edit Menu ---
+        self.menu_edit = self.menu_bar.addMenu("Edit")
+        
+        self.act_copy = QAction("Copy ASCII to Clipboard", self.parent_window)
+        self.act_copy.setShortcut("Ctrl+C")
+        self.menu_edit.addAction(self.act_copy)
+        
+        self.act_paste = QAction("Paste Image from Clipboard", self.parent_window)
+        self.act_paste.setShortcut("Ctrl+V")
+        self.menu_edit.addAction(self.act_paste)
+        
+        # --- View Menu ---
+        self.menu_view = self.menu_bar.addMenu("View")
+        
+        self.act_toggle_preview = QAction("Show Image Preview Window", self.parent_window)
+        self.act_toggle_preview.setCheckable(True)
+        self.act_toggle_preview.setChecked(False)
+        self.menu_view.addAction(self.act_toggle_preview)
+        
+        self.act_window_on_top = QAction("Keep Preview Window On Top", self.parent_window)
+        self.act_window_on_top.setCheckable(True)
+        self.act_window_on_top.setChecked(True) # Requested to be toggled on by default
+        self.menu_view.addAction(self.act_window_on_top)
+        
+        self.menu_view.addSeparator()
+        
+        self.act_invert_processing = QAction("Invert ASCII Calculation", self.parent_window)
+        self.act_invert_processing.setCheckable(True)
+        self.act_invert_processing.setChecked(False)
+        self.menu_view.addAction(self.act_invert_processing)
 
     def apply_theme(self, is_inverted):
         """Changes the output text edit color scheme dynamically."""
