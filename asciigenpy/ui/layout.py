@@ -88,10 +88,10 @@ class AsciigenUI(QWidget):
         ascii_layout = QVBoxLayout()
         ascii_layout.setSpacing(10)
         
-        self.w_label = QLabel("Output Width: 120")
+        self.w_label = QLabel("Width: 120")
         self.w_slider = self._create_slider(20, 600, 120, ascii_layout, self.w_label)
         
-        self.h_label = QLabel("Output Height: 60")
+        self.h_label = QLabel("Height: 60")
         self.h_slider = self._create_slider(10, 300, 60, ascii_layout, self.h_label)
         
         self.aspect_cb = QCheckBox("Keep Aspect Ratio")

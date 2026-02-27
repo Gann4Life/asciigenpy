@@ -4,7 +4,7 @@ import io
 import pyperclip
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox
 from PyQt6.QtCore import Qt, QTimer, QSettings
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QImage
 from PIL import Image, ImageEnhance, ImageOps
 from ascii_magic import AsciiArt
 
@@ -26,7 +26,9 @@ class AsciigenPy(QMainWindow):
         self.ui = AsciigenUI(self)
         self.setCentralWidget(self.ui)
         
-        self.settings = QSettings("Gann4Life", "AsciigenPy")
+        # Using QSettings("Organization", "Application")
+        # Standardizing organization as "asciigenpy" produces ~/.config/asciigenpy/AsciigenPy.conf cleanly
+        self.settings = QSettings("asciigenpy", "AsciigenPy")
         
         self.img_pil = None
         self.source_win = SourceWindow(self)
@@ -48,8 +50,8 @@ class AsciigenPy(QMainWindow):
         self.ui.btn_copy.clicked.connect(self.to_clip)
         
         # Adjustments
-        self.ui.c_slider.valueChanged.connect(self.trigger_update)
-        self.ui.b_slider.valueChanged.connect(self.trigger_update)
+        self.ui.c_slider.valueChanged.connect(self.update_image_preview)
+        self.ui.b_slider.valueChanged.connect(self.update_image_preview)
         
         # ASCII Rules
         self.ui.w_slider.valueChanged.connect(self.sync_width)
@@ -91,7 +93,7 @@ class AsciigenPy(QMainWindow):
         self.ui.h_slider.blockSignals(True)
         self.ui.h_slider.setValue(max(self.ui.h_slider.minimum(), min(self.ui.h_slider.maximum(), new_h)))
         self.ui.h_slider.blockSignals(False)
-        self.ui.h_label.setText(f"Output Height: {self.ui.h_slider.value()}")
+        self.ui.h_label.setText(f"Height: {self.ui.h_slider.value()}")
 
     def sync_height(self, val):
         if not self.ui.aspect_cb.isChecked() or not self.img_pil: return
@@ -106,7 +108,7 @@ class AsciigenPy(QMainWindow):
         self.ui.w_slider.blockSignals(True)
         self.ui.w_slider.setValue(max(self.ui.w_slider.minimum(), min(self.ui.w_slider.maximum(), new_w)))
         self.ui.w_slider.blockSignals(False)
-        self.ui.w_label.setText(f"Output Width: {self.ui.w_slider.value()}")
+        self.ui.w_label.setText(f"Width: {self.ui.w_slider.value()}")
 
     def on_charset_preset_changed(self, text):
         if text != "Custom":
@@ -124,7 +126,7 @@ class AsciigenPy(QMainWindow):
     def toggle_invert(self):
         self.is_inverted = not self.is_inverted
         self.ui.apply_theme(self.is_inverted)
-        self.trigger_update()
+        self.update_image_preview()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -155,7 +157,7 @@ class AsciigenPy(QMainWindow):
                     self.toggle_preview()
                 if self.ui.aspect_cb.isChecked():
                     self.sync_width(self.ui.w_slider.value())
-                self.trigger_update()
+                self.update_image_preview()
         else:
             self.ui.output.setPlainText("CLIPBOARD ERROR: No valid image found in clipboard.")
 
@@ -182,11 +184,57 @@ class AsciigenPy(QMainWindow):
             self.toggle_preview()
         if self.ui.aspect_cb.isChecked():
             self.sync_width(self.ui.w_slider.value())
-        self.trigger_update()
+        self.update_image_preview()
 
     def on_crop_changed(self):
         if self.ui.aspect_cb.isChecked() and self.img_pil:
             self.sync_width(self.ui.w_slider.value())
+        self.trigger_update()
+
+    def apply_image_modifiers(self, img):
+        """
+        STANDARD IMAGE PIPELINE:
+        ========================
+        Any future parameters that alter the image visually (filters, colors, contrast, etc.) 
+        MUST be implemented inside this method. Do NOT put isolated modifiers directly in process_ascii. 
+        This guarantees that the UI preview window and the ASCII generation engine 
+        are always 100% synchronized in how they process the image.
+        """
+        c = self.ui.c_slider.value() / 10.0
+        b = self.ui.b_slider.value() / 10.0
+        
+        # We process the labels here too so they always stay synced with the state
+        self.ui.c_label.setText(f"Contrast: {c}")
+        self.ui.b_label.setText(f"Brightness: {b}")
+
+        if self.is_inverted:
+            img = ImageOps.invert(img)
+        img = ImageEnhance.Contrast(img).enhance(c)
+        img = ImageEnhance.Brightness(img).enhance(b)
+        
+        return img
+
+    def update_image_preview(self):
+        """Re-generates the inspector preview pixmap through the standard pipeline."""
+        if self.img_pil:
+            try:
+                # Apply the standard pipeline to the base image for the inspector and cache it globally
+                self.processed_img_pil = self.apply_image_modifiers(self.img_pil.copy())
+                
+                # Fast PIL -> QPixmap conversion
+                if self.processed_img_pil.mode != "RGB":
+                    self.processed_img_pil = self.processed_img_pil.convert("RGB")
+                    
+                data = self.processed_img_pil.tobytes("raw", "RGB")
+                qimage = QImage(data, self.processed_img_pil.width, self.processed_img_pil.height, self.processed_img_pil.width * 3, QImage.Format.Format_RGB888)
+                
+                # Update the background texture (does not reset the window size or crop selection)
+                self.source_win.label.original_pixmap = QPixmap.fromImage(qimage)
+                self.source_win.label.update()
+            except Exception as e:
+                self.ui.output.setPlainText(f"PREVIEW ERROR: {e}")
+                
+        # Continues the cascade to compute the ASCII text rendering
         self.trigger_update()
 
     def trigger_update(self):
@@ -194,31 +242,32 @@ class AsciigenPy(QMainWindow):
         self.update_timer.start(35)
 
     def process_ascii(self):
-        if not self.img_pil: return
+        if not hasattr(self, 'processed_img_pil') or not self.processed_img_pil:
+            return
+            
         try:
             rect = self.source_win.selection_rect
             if not rect.isNull() and rect.width() > 5 and rect.height() > 5:
                 crop_box = (int(rect.x()), int(rect.y()), int(rect.right()), int(rect.bottom()))
-                working_img = self.img_pil.crop(crop_box)
+                working_img = self.processed_img_pil.crop(crop_box)
             else:
-                working_img = self.img_pil.copy()
+                working_img = self.processed_img_pil.copy()
 
-            c = self.ui.c_slider.value() / 10.0
-            b = self.ui.b_slider.value() / 10.0
             w = self.ui.w_slider.value()
             h = self.ui.h_slider.value()
             
-            self.ui.c_label.setText(f"Contrast: {c}")
-            self.ui.b_label.setText(f"Brightness: {b}")
-            self.ui.w_label.setText(f"Output Width: {w}")
-            self.ui.h_label.setText(f"Output Height: {h}")
-            
-            if self.is_inverted:
-                working_img = ImageOps.invert(working_img)
-            working_img = ImageEnhance.Contrast(working_img).enhance(c)
-            working_img = ImageEnhance.Brightness(working_img).enhance(b)
+            self.ui.w_label.setText(f"Width: {w}")
+            self.ui.h_label.setText(f"Height: {h}")
 
             try:
+                # ascii_magic inherently maps Dark (0) -> index 0 (Space) and Light (255) -> index N (@).
+                # To map the user's conceptual "White = Nothing, Dark = Something" pattern directly 
+                # onto the visual state of the Preview Window, we must always invert the luminosity 
+                # simply as an adapter for ascii_magic's scale expectation.
+                working_img = ImageOps.invert(working_img)
+                    
+                charset = self.ui.charset_input.text()
+
                 if hasattr(AsciiArt, 'from_pillow_image'):
                     resized_img = working_img.resize((w, h), Image.Resampling.LANCZOS)
                     art_resized = AsciiArt.from_pillow_image(resized_img)
@@ -230,9 +279,9 @@ class AsciigenPy(QMainWindow):
                     art_resized = AsciiArt.from_image(res_io)
 
                 try:
-                    res = art_resized.to_ascii(columns=w, char=self.ui.charset_input.text(), width_ratio=1.0)
+                    res = art_resized.to_ascii(columns=w, char=charset, width_ratio=1.0)
                 except TypeError:
-                    res = art_resized.to_ascii(columns=w, chars=self.ui.charset_input.text(), width_ratio=1.0)
+                    res = art_resized.to_ascii(columns=w, chars=charset, width_ratio=1.0)
                 
                 self.ui.output.setPlainText(res)
             except Exception as inner_e:
